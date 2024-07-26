@@ -1,63 +1,25 @@
-﻿using System;
-using System.IO;
-using System.Reflection;
+﻿using System.IO;
 using System.Collections.Generic;
 
 public static class StaticData
 {
-	public static IReadOnlyDictionary<int, Member> Members { get; private set; }
-	public static IReadOnlyDictionary<int, Family> Familys { get; private set; }
+	public static IReadOnlyDictionary<int, Member> Members { get; private set; } = MemberDictionary;
+	public static IReadOnlyDictionary<int, Family> Familys { get; private set; } = FamilyDictionary;
 
-	public static void ParseBinaryData<T>(byte[] buffer) where T : DataRowBase
+	private static Dictionary<int, Member> MemberDictionary = new();
+	private static Dictionary<int, Family> FamilyDictionary = new();
+
+	public static void ParseBinaryData<T>(byte[] buffer) where T : DataRowBase, new()
 	{
-		List<T> datas = new();
 		using MemoryStream memoryStream = new(buffer);
 		using BinaryReader binaryReader = new(memoryStream);
 		int count = binaryReader.ReadInt32();
-		ConstructorInfo constructor = typeof(T).GetConstructor(new[] { typeof(BinaryReader) }) ?? throw new InvalidOperationException($"Type {typeof(T)} does not have a constructor that takes a byte[] parameter.");
 		for (int i = 0; i < count; i++)
 		{
-			T data = (T)constructor.Invoke(new object[] { binaryReader });
-			datas.Add(data);
+			T data = new();
+			data.ParseData(binaryReader);
 		}
-		UpdateData(datas);
 	}	
-	private static void UpdateData<T>(List<T> datas) where T : DataRowBase
-	{
-		if (typeof(T).Equals(typeof(Member)))
-		{
-			Dictionary<int, Member> keyValuePairs = new();
-			foreach (var data in datas)
-			{
-				if (data is Member config)
-				{
-					keyValuePairs.Add(config.Id, config);
-					continue;
-				}
-				throw new InvalidCastException($"Failed to cast {data.GetType()} to GameConfig");
-			}
-			Members = keyValuePairs;
-			return;
-		}
-
-		if (typeof(T).Equals(typeof(Family)))
-		{
-			Dictionary<int, Family> keyValuePairs = new();
-			foreach (var data in datas)
-			{
-				if (data is Family config)
-				{
-					keyValuePairs.Add(config.Id, config);
-					continue;
-				}
-				throw new InvalidCastException($"Failed to cast {data.GetType()} to GameConfig");
-			}
-			Familys = keyValuePairs;
-			return;
-		}
-
-	}
-
 	private static int[] ReadInt32Array(this BinaryReader binaryReader)
 	{
 		int length = binaryReader.ReadInt32();
@@ -76,10 +38,8 @@ public static class StaticData
 			get;
 		}
 
-		public virtual void ParseData(byte[] dataBytes)
-		{
-
-		}
+		public abstract void ParseData(byte[] dataBytes);
+		public abstract void ParseData(BinaryReader binaryReader);
 	}
 
 	/// <summary>
@@ -148,19 +108,15 @@ public static class StaticData
 			private set;
 		}
 
-		public Member(byte[] buffer)
+		public override void ParseData(byte[] dataBytes)
 		{
-			using MemoryStream memoryStream = new(buffer);
+			using MemoryStream memoryStream = new(dataBytes);
 			using BinaryReader binaryReader = new(memoryStream);
 			_id = binaryReader.ReadInt32();
-			Name = binaryReader.ReadString();
-			Age = binaryReader.ReadInt32();
-			Stature = binaryReader.ReadSingle();
-			Married = binaryReader.ReadBoolean();
-			Family = binaryReader.ReadInt32Array();
+			ParseData(binaryReader);
 		}
 
-		public Member(BinaryReader binaryReader)
+		public override void ParseData(BinaryReader binaryReader)
 		{
 			_id = binaryReader.ReadInt32();
 			Name = binaryReader.ReadString();
@@ -168,6 +124,7 @@ public static class StaticData
 			Stature = binaryReader.ReadSingle();
 			Married = binaryReader.ReadBoolean();
 			Family = binaryReader.ReadInt32Array();
+			MemberDictionary.Add(_id, this);
 		}
 	}
 
@@ -216,22 +173,21 @@ public static class StaticData
 			private set;
 		}
 
-		public Family(byte[] buffer)
+		public override void ParseData(byte[] dataBytes)
 		{
-			using MemoryStream memoryStream = new(buffer);
+			using MemoryStream memoryStream = new(dataBytes);
 			using BinaryReader binaryReader = new(memoryStream);
 			_id = binaryReader.ReadInt32();
-			Name = binaryReader.ReadString();
-			Path = binaryReader.ReadString();
-			Members = binaryReader.ReadInt32Array();
+			ParseData(binaryReader);
 		}
 
-		public Family(BinaryReader binaryReader)
+		public override void ParseData(BinaryReader binaryReader)
 		{
 			_id = binaryReader.ReadInt32();
 			Name = binaryReader.ReadString();
 			Path = binaryReader.ReadString();
 			Members = binaryReader.ReadInt32Array();
+			FamilyDictionary.Add(_id, this);
 		}
 	}
 

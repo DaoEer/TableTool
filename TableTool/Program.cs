@@ -134,56 +134,35 @@ internal class Program
         }
 
         StringBuilder builder = new();
-        builder.AppendLine("using System;");
         builder.AppendLine("using System.IO;");
-        builder.AppendLine("using System.Reflection;");
         builder.AppendLine("using System.Collections.Generic;\r\n");
         builder.AppendLine("public static class StaticData");
         builder.AppendLine("{");
 
         foreach (TableInfo table in tables)
         {
-            builder.AppendLine($"\tpublic static IReadOnlyDictionary<int, {table.Name}> {table.Name}s {{ get; private set; }}");
+            builder.AppendLine($"\tpublic static IReadOnlyDictionary<int, {table.Name}> {table.Name}s {{ get; private set; }} = {table.Name}Dictionary;");
+        }
+        builder.AppendLine();
+
+        foreach (TableInfo table in tables)
+        {
+            builder.AppendLine($"\tprivate static Dictionary<int, {table.Name}> {table.Name}Dictionary = new();");
         }
         builder.AppendLine();
 
         // 配置表加载方法
-        builder.AppendLine("\tpublic static void ParseBinaryData<T>(byte[] buffer) where T : DataRowBase");
+        builder.AppendLine("\tpublic static void ParseBinaryData<T>(byte[] buffer) where T : DataRowBase, new()");
         builder.AppendLine("\t{");
-        builder.AppendLine("\t\tList<T> datas = new();");
         builder.AppendLine("\t\tusing MemoryStream memoryStream = new(buffer);");
         builder.AppendLine("\t\tusing BinaryReader binaryReader = new(memoryStream);");
         builder.AppendLine("\t\tint count = binaryReader.ReadInt32();");
-        builder.AppendLine("\t\tConstructorInfo constructor = typeof(T).GetConstructor(new[] { typeof(BinaryReader) }) ?? throw new InvalidOperationException($\"Type {typeof(T)} does not have a constructor that takes a byte[] parameter.\");");
         builder.AppendLine("\t\tfor (int i = 0; i < count; i++)");
         builder.AppendLine("\t\t{");
-        builder.AppendLine("\t\t\tT data = (T)constructor.Invoke(new object[] { binaryReader });");
-        builder.AppendLine("\t\t\tdatas.Add(data);");
+        builder.AppendLine("\t\t\tT data = new();");
+        builder.AppendLine("\t\t\tdata.ParseData(binaryReader);");
         builder.AppendLine("\t\t}");
-        builder.AppendLine("\t\tUpdateData(datas);");
         builder.AppendLine("\t}\r\t");
-
-        builder.AppendLine("\tprivate static void UpdateData<T>(List<T> datas) where T : DataRowBase");
-        builder.AppendLine("\t{");
-        foreach (TableInfo table in tables)
-        {
-            builder.AppendLine($"\t\tif (typeof(T).Equals(typeof({table.Name})))");
-            builder.AppendLine("\t\t{");
-            builder.AppendLine($"\t\t\tDictionary<int, {table.Name}> keyValuePairs = new();");
-            builder.AppendLine("\t\t\tforeach (var data in datas)");
-            builder.AppendLine("\t\t\t{");
-            builder.AppendLine($"\t\t\t\tif (data is {table.Name} config)");
-            builder.AppendLine("\t\t\t\t{");
-            builder.AppendLine("\t\t\t\t\tkeyValuePairs.Add(config.Id, config);");
-            builder.AppendLine("\t\t\t\t\tcontinue;");
-            builder.AppendLine("\t\t\t\t}");
-            builder.AppendLine("\t\t\t\tthrow new InvalidCastException($\"Failed to cast {data.GetType()} to GameConfig\");");
-            builder.AppendLine("\t\t\t}");
-            builder.AppendLine($"\t\t\t{table.Name}s = keyValuePairs;");
-            builder.AppendLine("\t\t\treturn;");
-            builder.AppendLine("\t\t}\r\n");
-        }
-        builder.AppendLine("\t}\r\n");
 
         // BinaryReader扩展方法
         builder.AppendLine("\tprivate static int[] ReadInt32Array(this BinaryReader binaryReader)");
@@ -204,9 +183,8 @@ internal class Program
         builder.AppendLine("\t\t{");
         builder.AppendLine("\t\t\tget;");
         builder.AppendLine("\t\t}\r\n");
-        builder.AppendLine("\t\tpublic virtual void ParseData(byte[] dataBytes)");
-        builder.AppendLine("\t\t{\r\n");
-        builder.AppendLine("\t\t}");
+        builder.AppendLine("\t\tpublic abstract void ParseData(byte[] dataBytes);");
+        builder.AppendLine("\t\tpublic abstract void ParseData(BinaryReader binaryReader);");
         builder.AppendLine("\t}\r\n");
 
         // 数据行类
@@ -237,23 +215,15 @@ internal class Program
                 builder.AppendLine("\t\t}\r\n");
             }
 
-            builder.AppendLine($"\t\tpublic {table.Name}(byte[] buffer)");
+            builder.AppendLine("\t\tpublic override void ParseData(byte[] dataBytes)");
             builder.AppendLine("\t\t{");
-            builder.AppendLine("\t\t\tusing MemoryStream memoryStream = new(buffer);");
+            builder.AppendLine("\t\t\tusing MemoryStream memoryStream = new(dataBytes);");
             builder.AppendLine("\t\t\tusing BinaryReader binaryReader = new(memoryStream);");
             builder.AppendLine("\t\t\t_id = binaryReader.ReadInt32();");
-            foreach (var head in table.TableHead.Values)
-            {
-                if (head.Item2.ToLower().Equals("byte"))
-                {
-                    builder.AppendLine($"\t\t\t{head.Item1} = (byte)binaryReader.{_readFuncByType[head.Item2]}();");
-                    continue;
-                }
-                builder.AppendLine($"\t\t\t{head.Item1} = binaryReader.{_readFuncByType[head.Item2]}();");
-            }
+            builder.AppendLine("\t\t\tParseData(binaryReader);");
             builder.AppendLine("\t\t}\r\n");
 
-            builder.AppendLine($"\t\tpublic {table.Name}(BinaryReader binaryReader)");
+            builder.AppendLine("\t\tpublic override void ParseData(BinaryReader binaryReader)");
             builder.AppendLine("\t\t{");
             builder.AppendLine("\t\t\t_id = binaryReader.ReadInt32();");
             foreach (var head in table.TableHead.Values)
@@ -265,6 +235,7 @@ internal class Program
                 }
                 builder.AppendLine($"\t\t\t{head.Item1} = binaryReader.{_readFuncByType[head.Item2]}();");
             }
+            builder.AppendLine($"\t\t\t{table.Name}Dictionary.Add(_id, this);");
             builder.AppendLine("\t\t}");
             builder.AppendLine("\t}\r\n");
         }
