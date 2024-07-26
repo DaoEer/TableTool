@@ -1,7 +1,6 @@
 ﻿using ExcelDataReader;
 using System.Data;
 using System.Text;
-using System.Text.Json;
 
 internal class Program
 {
@@ -106,16 +105,9 @@ internal class Program
     private static void Main(string[] args)
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-        JsonElement jsonElement = JsonDocument.Parse(File.ReadAllText($"{Environment.CurrentDirectory}/Config.json")).RootElement;
-        _tablePath = jsonElement.GetProperty("TablePath").GetString();
-        _binaryOutPath = jsonElement.GetProperty("BinaryOutPath").GetString();
-        _cSharpOutPath = jsonElement.GetProperty("CSharpOutPath").GetString();
-        if (string.IsNullOrEmpty(_tablePath) || string.IsNullOrEmpty(_binaryOutPath) || string.IsNullOrEmpty(_cSharpOutPath))
-        {
-            Console.WriteLine("请填写配置文件后重试");
-            Console.ReadKey();
-            return;
-        }
+        _tablePath = args[0];
+        _binaryOutPath = args[1];
+        _cSharpOutPath = args[2];
 
         Console.WriteLine("开始生成表格数据");
         bool isReady = true;
@@ -134,25 +126,62 @@ internal class Program
         }
 
         StringBuilder builder = new();
+        builder.AppendLine("using System;");
         builder.AppendLine("using System.IO;");
+        builder.AppendLine("using System.Threading.Tasks;");
         builder.AppendLine("using System.Collections.Generic;\r\n");
         builder.AppendLine("public static class StaticData");
         builder.AppendLine("{");
 
         foreach (TableInfo table in tables)
         {
-            builder.AppendLine($"\tpublic static IReadOnlyDictionary<int, {table.Name}> {table.Name}s {{ get; private set; }} = {table.Name}Dictionary;");
+            builder.AppendLine($"\tpublic const string {table.Name}DataPath = @\"{_binaryOutPath}\\{table.Name}.bytes\";");
         }
         builder.AppendLine();
 
         foreach (TableInfo table in tables)
         {
-            builder.AppendLine($"\tprivate static Dictionary<int, {table.Name}> {table.Name}Dictionary = new();");
+            builder.AppendLine($"\tpublic static IReadOnlyDictionary<int, {table.Name}> {table.Name}s {{ get; private set; }} = {table.Name}Dictionary = new();");
         }
         builder.AppendLine();
 
-        // 配置表加载方法
-        builder.AppendLine("\tpublic static void ParseBinaryData<T>(byte[] buffer) where T : DataRowBase, new()");
+        foreach (TableInfo table in tables)
+        {
+            builder.AppendLine($"\tprivate static Dictionary<int, {table.Name}> {table.Name}Dictionary;");
+        }
+        builder.AppendLine();
+
+        // 加载全部配置表方法
+        builder.AppendLine("\tpublic static async void LoadAllData(Action onComplete)");
+        builder.AppendLine("\t{");
+        builder.AppendLine("\t\tawait Task.Run(() =>");
+        builder.AppendLine("\t\t{");
+        foreach (TableInfo table in tables)
+        {
+            builder.AppendLine($"\t\t\tLoadOneData<{table.Name}>({table.Name}DataPath);");
+        }
+        builder.AppendLine("\t\t});");
+        builder.AppendLine("\t\tonComplete?.Invoke();");
+        builder.AppendLine("\t}\r\n");
+
+        // 加载单个配置表方法
+        builder.AppendLine("\tpublic static void LoadOneData<T>(string filePath) where T : DataRowBase, new()");
+        builder.AppendLine("\t{");
+        builder.AppendLine("\t\tParseData<T>(File.ReadAllBytes(filePath));");
+        builder.AppendLine("\t}\r\n");
+
+        // 异步加载单个配置表方法
+        builder.AppendLine("\tpublic static async void LoadOneData<T>(string filePath, Action onComplete) where T : DataRowBase, new()");
+        builder.AppendLine("\t{");
+        builder.AppendLine("\t\tawait Task.Run(() =>");
+        builder.AppendLine("\t\t{");
+        builder.AppendLine("\t\t\tLoadOneData<T>(filePath);");
+        builder.AppendLine("\t\t});");
+        builder.AppendLine("\t\tonComplete?.Invoke();");
+        builder.AppendLine("\t}\r\n");
+
+        // 配置表解析方法
+        builder.AppendLine("\tprivate static void ParseData<T>(byte[] buffer) where T : DataRowBase, new()");
         builder.AppendLine("\t{");
         builder.AppendLine("\t\tusing MemoryStream memoryStream = new(buffer);");
         builder.AppendLine("\t\tusing BinaryReader binaryReader = new(memoryStream);");
@@ -177,14 +206,24 @@ internal class Program
         builder.AppendLine("\t}\r\n");
 
         // 数据行基类
-        builder.AppendLine("\tpublic abstract class DataRowBase");
+        builder.AppendLine("\tpublic class DataRowBase");
         builder.AppendLine("\t{");
-        builder.AppendLine("\t\tpublic abstract int Id");
+        builder.AppendLine("\t\tprotected int _id;");
+        builder.AppendLine("\t\tpublic int Id");
         builder.AppendLine("\t\t{");
-        builder.AppendLine("\t\t\tget;");
+        builder.AppendLine("\t\t\tget");
+        builder.AppendLine("\t\t\t{");
+        builder.AppendLine("\t\t\t\treturn _id;");
+        builder.AppendLine("\t\t\t}");
         builder.AppendLine("\t\t}\r\n");
-        builder.AppendLine("\t\tpublic abstract void ParseData(byte[] dataBytes);");
-        builder.AppendLine("\t\tpublic abstract void ParseData(BinaryReader binaryReader);");
+        builder.AppendLine("\t\tpublic void ParseData(byte[] dataBytes)");
+        builder.AppendLine("\t\t{");
+        builder.AppendLine("\t\t\tusing MemoryStream memoryStream = new(dataBytes);");
+        builder.AppendLine("\t\t\tusing BinaryReader binaryReader = new(memoryStream);");
+        builder.AppendLine("\t\t\t_id = binaryReader.ReadInt32();");
+        builder.AppendLine("\t\t\tParseData(binaryReader);");
+        builder.AppendLine("\t\t}\r\n");
+        builder.AppendLine("\t\tpublic virtual void ParseData(BinaryReader binaryReader) { }");
         builder.AppendLine("\t}\r\n");
 
         // 数据行类
@@ -193,15 +232,6 @@ internal class Program
             OutFormatAnnotation($"{table.Name}", 1, builder);
             builder.AppendLine($"\tpublic class {table.Name} : DataRowBase");
             builder.AppendLine("\t{");
-            builder.AppendLine("\t\tprivate int _id;\r\n");
-            OutFormatAnnotation("获取场景编号", 2, builder);
-            builder.AppendLine("\t\tpublic override int Id");
-            builder.AppendLine("\t\t{");
-            builder.AppendLine("\t\t\tget");
-            builder.AppendLine("\t\t\t{");
-            builder.AppendLine("\t\t\t\treturn _id;");
-            builder.AppendLine("\t\t\t}");
-            builder.AppendLine("\t\t}\r\n");
 
             foreach (var head in table.TableHead.Values)
             {
@@ -215,14 +245,6 @@ internal class Program
                 builder.AppendLine("\t\t}\r\n");
             }
 
-            builder.AppendLine("\t\tpublic override void ParseData(byte[] dataBytes)");
-            builder.AppendLine("\t\t{");
-            builder.AppendLine("\t\t\tusing MemoryStream memoryStream = new(dataBytes);");
-            builder.AppendLine("\t\t\tusing BinaryReader binaryReader = new(memoryStream);");
-            builder.AppendLine("\t\t\t_id = binaryReader.ReadInt32();");
-            builder.AppendLine("\t\t\tParseData(binaryReader);");
-            builder.AppendLine("\t\t}\r\n");
-
             builder.AppendLine("\t\tpublic override void ParseData(BinaryReader binaryReader)");
             builder.AppendLine("\t\t{");
             builder.AppendLine("\t\t\t_id = binaryReader.ReadInt32();");
@@ -235,7 +257,7 @@ internal class Program
                 }
                 builder.AppendLine($"\t\t\t{head.Item1} = binaryReader.{_readFuncByType[head.Item2]}();");
             }
-            builder.AppendLine($"\t\t\t{table.Name}Dictionary.Add(_id, this);");
+            builder.AppendLine($"\t\t\t{table.Name}Dictionary[_id] = this;");
             builder.AppendLine("\t\t}");
             builder.AppendLine("\t}\r\n");
         }
@@ -244,7 +266,6 @@ internal class Program
         File.WriteAllText($"{_cSharpOutPath}/StaticData.cs", builder.ToString(), Encoding.UTF8);
 
         Console.WriteLine("表格数据生成完毕");
-        Console.ReadKey();
     }
 
     private static List<TableInfo> GetAllTable(string path, ref bool isReady)
@@ -287,7 +308,7 @@ internal class Program
         StringBuilder tabSbr = new();
         for (int i = tabNum; i > 0; i--)
         {
-            tabSbr.Append("\t");
+            tabSbr.Append('\t');
         }
         string tabString = tabSbr.ToString();
         string[] lines = annotation.Split('\n');

@@ -1,15 +1,44 @@
-﻿using System.IO;
+﻿using System;
+using System.IO;
+using System.Threading.Tasks;
 using System.Collections.Generic;
 
 public static class StaticData
 {
-	public static IReadOnlyDictionary<int, Member> Members { get; private set; } = MemberDictionary;
-	public static IReadOnlyDictionary<int, Family> Familys { get; private set; } = FamilyDictionary;
+	public const string MemberDataPath = @"D:\Work\Unity\YouYouFramework\Client\Assets\GameMain\DataTable\Test\Data\Member.bytes";
+	public const string FamilyDataPath = @"D:\Work\Unity\YouYouFramework\Client\Assets\GameMain\DataTable\Test\Data\Family.bytes";
 
-	private static Dictionary<int, Member> MemberDictionary = new();
-	private static Dictionary<int, Family> FamilyDictionary = new();
+	public static IReadOnlyDictionary<int, Member> Members { get; private set; } = MemberDictionary = new();
+	public static IReadOnlyDictionary<int, Family> Familys { get; private set; } = FamilyDictionary = new();
 
-	public static void ParseBinaryData<T>(byte[] buffer) where T : DataRowBase, new()
+	private static Dictionary<int, Member> MemberDictionary;
+	private static Dictionary<int, Family> FamilyDictionary;
+
+	public static async void LoadAllData(Action onComplete)
+	{
+		await Task.Run(() =>
+		{
+			LoadOneData<Member>(MemberDataPath);
+			LoadOneData<Family>(FamilyDataPath);
+		});
+		onComplete?.Invoke();
+	}
+
+	public static void LoadOneData<T>(string filePath) where T : DataRowBase, new()
+	{
+		ParseData<T>(File.ReadAllBytes(filePath));
+	}
+
+	public static async void LoadOneData<T>(string filePath, Action onComplete) where T : DataRowBase, new()
+	{
+		await Task.Run(() =>
+		{
+			LoadOneData<T>(filePath);
+		});
+		onComplete?.Invoke();
+	}
+
+	private static void ParseData<T>(byte[] buffer) where T : DataRowBase, new()
 	{
 		using MemoryStream memoryStream = new(buffer);
 		using BinaryReader binaryReader = new(memoryStream);
@@ -31,28 +60,10 @@ public static class StaticData
 		return intArray;
 	}
 
-	public abstract class DataRowBase
+	public class DataRowBase
 	{
-		public abstract int Id
-		{
-			get;
-		}
-
-		public abstract void ParseData(byte[] dataBytes);
-		public abstract void ParseData(BinaryReader binaryReader);
-	}
-
-	/// <summary>
-	/// Member
-	/// </summary>
-	public class Member : DataRowBase
-	{
-		private int _id;
-
-		/// <summary>
-		/// 获取场景编号
-		/// </summary>
-		public override int Id
+		protected int _id;
+		public int Id
 		{
 			get
 			{
@@ -60,6 +71,22 @@ public static class StaticData
 			}
 		}
 
+		public void ParseData(byte[] dataBytes)
+		{
+			using MemoryStream memoryStream = new(dataBytes);
+			using BinaryReader binaryReader = new(memoryStream);
+			_id = binaryReader.ReadInt32();
+			ParseData(binaryReader);
+		}
+
+		public virtual void ParseData(BinaryReader binaryReader) { }
+	}
+
+	/// <summary>
+	/// Member
+	/// </summary>
+	public class Member : DataRowBase
+	{
 		/// <summary>
 		/// 名字
 		/// </summary>
@@ -108,14 +135,6 @@ public static class StaticData
 			private set;
 		}
 
-		public override void ParseData(byte[] dataBytes)
-		{
-			using MemoryStream memoryStream = new(dataBytes);
-			using BinaryReader binaryReader = new(memoryStream);
-			_id = binaryReader.ReadInt32();
-			ParseData(binaryReader);
-		}
-
 		public override void ParseData(BinaryReader binaryReader)
 		{
 			_id = binaryReader.ReadInt32();
@@ -124,7 +143,7 @@ public static class StaticData
 			Stature = binaryReader.ReadSingle();
 			Married = binaryReader.ReadBoolean();
 			Family = binaryReader.ReadInt32Array();
-			MemberDictionary.Add(_id, this);
+			MemberDictionary[_id] = this;
 		}
 	}
 
@@ -133,19 +152,6 @@ public static class StaticData
 	/// </summary>
 	public class Family : DataRowBase
 	{
-		private int _id;
-
-		/// <summary>
-		/// 获取场景编号
-		/// </summary>
-		public override int Id
-		{
-			get
-			{
-				return _id;
-			}
-		}
-
 		/// <summary>
 		/// 名字
 		/// </summary>
@@ -173,21 +179,13 @@ public static class StaticData
 			private set;
 		}
 
-		public override void ParseData(byte[] dataBytes)
-		{
-			using MemoryStream memoryStream = new(dataBytes);
-			using BinaryReader binaryReader = new(memoryStream);
-			_id = binaryReader.ReadInt32();
-			ParseData(binaryReader);
-		}
-
 		public override void ParseData(BinaryReader binaryReader)
 		{
 			_id = binaryReader.ReadInt32();
 			Name = binaryReader.ReadString();
 			Path = binaryReader.ReadString();
 			Members = binaryReader.ReadInt32Array();
-			FamilyDictionary.Add(_id, this);
+			FamilyDictionary[_id] = this;
 		}
 	}
 
