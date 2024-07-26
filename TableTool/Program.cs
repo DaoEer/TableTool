@@ -1,7 +1,7 @@
 ﻿using ExcelDataReader;
-using System.Configuration;
 using System.Data;
 using System.Text;
+using System.Text.Json;
 
 internal class Program
 {
@@ -38,6 +38,9 @@ internal class Program
             {"bool", "ReadBoolean"},
             {"int[]", "ReadInt32Array"}
         };
+    private static string _tablePath = string.Empty;
+    private static string _binaryOutPath = string.Empty;
+    private static string _cSharpOutPath = string.Empty;
 
     private class TableInfo
     {
@@ -103,21 +106,30 @@ internal class Program
     private static void Main(string[] args)
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        JsonElement jsonElement = JsonDocument.Parse(File.ReadAllText($"{Environment.CurrentDirectory}/Config.json")).RootElement;
+        _tablePath = jsonElement.GetProperty("TablePath").GetString();
+        _binaryOutPath = jsonElement.GetProperty("BinaryOutPath").GetString();
+        _cSharpOutPath = jsonElement.GetProperty("CSharpOutPath").GetString();
+        if (string.IsNullOrEmpty(_tablePath) || string.IsNullOrEmpty(_binaryOutPath) || string.IsNullOrEmpty(_cSharpOutPath))
+        {
+            Console.WriteLine("请填写配置文件后重试");
+            Console.ReadKey();
+            return;
+        }
 
         Console.WriteLine("开始生成表格数据");
-
         bool isReady = true;
-        List<TableInfo> tables = GetAllTable(ConfigurationManager.AppSettings["TablePath"], ref isReady);
+        List<TableInfo> tables = GetAllTable(_tablePath, ref isReady);
         if (!isReady)
         {
             Console.WriteLine("表格数据生成中断");
             return;
         }
 
-        InitOutFolder(ConfigurationManager.AppSettings["BinaryOutPath"]);
+        InitOutFolder(_binaryOutPath);
         foreach (var table in tables)
         {
-            using FileStream binaryStream = new(string.Format("{0}\\{1}", ConfigurationManager.AppSettings["BinaryOutPath"], table.Name + ".bytes"), FileMode.Create);
+            using FileStream binaryStream = new(string.Format("{0}\\{1}", _binaryOutPath, table.Name + ".bytes"), FileMode.Create);
             binaryStream.Write(table.Data, 0, table.Data.Length);
         }
 
@@ -151,7 +163,7 @@ internal class Program
         builder.AppendLine("\t\tUpdateData(datas);");
         builder.AppendLine("\t}\r\t");
 
-        builder.AppendLine("\tpublic static void UpdateData<T>(List<T> datas) where T : DataRowBase");
+        builder.AppendLine("\tprivate static void UpdateData<T>(List<T> datas) where T : DataRowBase");
         builder.AppendLine("\t{");
         foreach (TableInfo table in tables)
         {
@@ -174,7 +186,7 @@ internal class Program
         builder.AppendLine("\t}\r\n");
 
         // BinaryReader扩展方法
-        builder.AppendLine("\tpublic static int[] ReadInt32Array(this BinaryReader binaryReader)");
+        builder.AppendLine("\tprivate static int[] ReadInt32Array(this BinaryReader binaryReader)");
         builder.AppendLine("\t{");
         builder.AppendLine("\t\tint length = binaryReader.ReadInt32();");
         builder.AppendLine("\t\tint[] intArray = new int[length];");
@@ -239,7 +251,7 @@ internal class Program
                 }
                 builder.AppendLine($"\t\t\t{head.Item1} = binaryReader.{_readFuncByType[head.Item2]}();");
             }
-            builder.AppendLine("\t\t}");
+            builder.AppendLine("\t\t}\r\n");
 
             builder.AppendLine($"\t\tpublic {table.Name}(BinaryReader binaryReader)");
             builder.AppendLine("\t\t{");
@@ -258,9 +270,10 @@ internal class Program
         }
         builder.AppendLine("}\r\n");
 
-        File.WriteAllText($"{ConfigurationManager.AppSettings["CSharpOutPath"]}/StaticData.cs", builder.ToString(), Encoding.UTF8);
+        File.WriteAllText($"{_cSharpOutPath}/StaticData.cs", builder.ToString(), Encoding.UTF8);
 
         Console.WriteLine("表格数据生成完毕");
+        Console.ReadKey();
     }
 
     private static List<TableInfo> GetAllTable(string path, ref bool isReady)

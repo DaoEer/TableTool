@@ -22,7 +22,7 @@ public static class StaticData
 		}
 		UpdateData(datas);
 	}	
-	public static void UpdateData<T>(List<T> datas) where T : DataRowBase
+	private static void UpdateData<T>(List<T> datas) where T : DataRowBase
 	{
 		if (typeof(T).Equals(typeof(Member)))
 		{
@@ -58,7 +58,7 @@ public static class StaticData
 
 	}
 
-	public static int[] ReadInt32Array(this BinaryReader binaryReader)
+	private static int[] ReadInt32Array(this BinaryReader binaryReader)
 	{
 		int length = binaryReader.ReadInt32();
 		int[] intArray = new int[length];
@@ -159,6 +159,7 @@ public static class StaticData
 			Married = binaryReader.ReadBoolean();
 			Family = binaryReader.ReadInt32Array();
 		}
+
 		public Member(BinaryReader binaryReader)
 		{
 			_id = binaryReader.ReadInt32();
@@ -224,6 +225,7 @@ public static class StaticData
 			Path = binaryReader.ReadString();
 			Members = binaryReader.ReadInt32Array();
 		}
+
 		public Family(BinaryReader binaryReader)
 		{
 			_id = binaryReader.ReadInt32();
