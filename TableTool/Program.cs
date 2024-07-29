@@ -4,7 +4,7 @@ using System.Text;
 
 internal class Program
 {
-    private static readonly Dictionary<string, Action<BinaryWriter, string>> _writeFuncByType = new()
+    private static Dictionary<string, Action<BinaryWriter, string>> _writeFuncByType = new()
         {
             {"int", (writer, value) => {writer.Write(string.IsNullOrWhiteSpace(value) ? default : int.Parse(value));}},
             {"long", (writer, value) => {writer.Write(string.IsNullOrWhiteSpace(value) ? default : long.Parse(value));}},
@@ -37,69 +37,23 @@ internal class Program
             {"bool", "ReadBoolean"},
             {"int[]", "ReadInt32Array"}
         };
+    private static HashSet<string> _mainKeyType = new()
+    {
+        "int",
+        "string",
+        "long",
+        "float",
+        "double"
+    };
     private static string _tablePath = string.Empty;
     private static string _binaryOutPath = string.Empty;
     private static string _cSharpOutPath = string.Empty;
 
-    private class TableInfo
+    private struct TableInfo
     {
-        public readonly string Name;
-        public readonly Dictionary<int, Tuple<string, string, string>> TableHead;
-        public readonly byte[] Data;
-
-        public TableInfo(DataTable dataTable, ref bool isReady)
-        {
-            TableHead = [];
-            Name = dataTable.TableName;
-
-            for (int i = 1; i < dataTable.Columns.Count; i++)
-            {
-                string name = dataTable.Rows[0][i].ToString().Trim();
-                string type = dataTable.Rows[1][i].ToString().Trim();
-                string comment = dataTable.Rows[2][i].ToString().Trim();
-                if (string.IsNullOrWhiteSpace(name))
-                {
-                    continue;
-                }
-                if (!_writeFuncByType.ContainsKey(type) && !string.IsNullOrWhiteSpace(type))
-                {
-                    Console.WriteLine($"无法识别“{type}”类型：{dataTable.TableName}表格/{2}行/{i + 1}列\r\n");
-                    isReady = false;
-                    continue;
-                }
-                TableHead.Add(i, new Tuple<string, string, string>(name, type, comment));
-            }
-
-            HashSet<int> ids = [];
-            using MemoryStream memoryStream = new();
-            using BinaryWriter binaryWriter = new(memoryStream);
-            _writeFuncByType["int"].Invoke(binaryWriter, (dataTable.Rows.Count - 3).ToString());
-            for (int i = 3; i < dataTable.Rows.Count; i++)
-            {
-                int id = int.Parse(dataTable.Rows[i][0].ToString().Trim());
-                if (!ids.Add(id))
-                {
-                    Console.WriteLine($"数据ID重复：{Name}表格/{dataTable.TableName}分页/{i + 1}行\r\n");
-                    isReady = false;
-                    continue;
-                }
-                _writeFuncByType["int"].Invoke(binaryWriter, id.ToString());
-                foreach (KeyValuePair<int, Tuple<string, string, string>> headInfo in TableHead)
-                {
-                    try
-                    {
-                        string value = dataTable.Rows[i][headInfo.Key].ToString().Trim();
-                        _writeFuncByType[headInfo.Value.Item2.ToLower()].Invoke(binaryWriter, value);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"数据解析错误：{Name}表格/{i + 1}行/{headInfo.Key + 1}列\r\n" + ex.Message);
-                        isReady = false;
-                    }
-                }
-            }
-            Data = memoryStream.ToArray();
-        }
+        public string Name;
+        public Dictionary<int, Tuple<string, string, string>> TableHead;
+        public byte[] Data;
     }
 
     private static void Main(string[] args)
@@ -135,19 +89,7 @@ internal class Program
 
         foreach (TableInfo table in tables)
         {
-            builder.AppendLine($"\tpublic const string {table.Name}DataPath = @\"{_binaryOutPath}\\{table.Name}.bytes\";");
-        }
-        builder.AppendLine();
-
-        foreach (TableInfo table in tables)
-        {
-            builder.AppendLine($"\tpublic static IReadOnlyDictionary<int, {table.Name}> {table.Name}s {{ get; private set; }} = {table.Name}Dictionary = new();");
-        }
-        builder.AppendLine();
-
-        foreach (TableInfo table in tables)
-        {
-            builder.AppendLine($"\tprivate static Dictionary<int, {table.Name}> {table.Name}Dictionary;");
+            builder.AppendLine($"\tprivate const string {table.Name}DataPath = @\"{_binaryOutPath}\\{table.Name}.bytes\";");
         }
         builder.AppendLine();
 
@@ -233,12 +175,31 @@ internal class Program
             builder.AppendLine($"\tpublic class {table.Name} : DataRowBase");
             builder.AppendLine("\t{");
 
-            foreach (var head in table.TableHead.Values)
+            builder.AppendLine($"\t\tpublic static IReadOnlyDictionary<int, {table.Name}> Data {{ get; private set; }} = DataDictionary = new();");
+            foreach (Tuple<string, string, string> headInfo in table.TableHead.Values)
             {
-                if (string.IsNullOrWhiteSpace(head.Item1)) continue;
-                if (string.IsNullOrWhiteSpace(head.Item2)) continue;
-                OutFormatAnnotation(head.Item3, 2, builder);
-                builder.AppendLine($"\t\tpublic {head.Item2} {head.Item1}");
+                if (!headInfo.Item1.StartsWith('#')) continue;
+                string name = headInfo.Item1[1..];
+                builder.AppendLine($"\t\tpublic static IReadOnlyDictionary<{headInfo.Item2.ToLower()}, {table.Name}> {name}ToData {{ get; private set; }} = {name}ToDataDictionary = new();");
+            }
+            builder.AppendLine();
+
+            builder.AppendLine($"\t\tprivate static Dictionary<int, {table.Name}> DataDictionary;");
+            foreach (Tuple<string, string, string> headInfo in table.TableHead.Values)
+            {
+                if (!headInfo.Item1.StartsWith('#')) continue;
+                string name = headInfo.Item1[1..];
+                builder.AppendLine($"\t\tpublic static Dictionary<{headInfo.Item2.ToLower()}, {table.Name}> {name}ToDataDictionary;");
+            }
+            builder.AppendLine();
+
+            foreach (Tuple<string, string, string> headInfo in table.TableHead.Values)
+            {
+                if (string.IsNullOrWhiteSpace(headInfo.Item1)) continue;
+                if (string.IsNullOrWhiteSpace(headInfo.Item2)) continue;
+                string name = headInfo.Item1.StartsWith('#') ? headInfo.Item1[1..] : headInfo.Item1;
+                OutFormatAnnotation(headInfo.Item3, 2, builder);
+                builder.AppendLine($"\t\tpublic {headInfo.Item2} {name}");
                 builder.AppendLine("\t\t{");
                 builder.AppendLine("\t\t\tget;");
                 builder.AppendLine("\t\t\tprivate set;");
@@ -248,23 +209,31 @@ internal class Program
             builder.AppendLine("\t\tpublic override void ParseData(BinaryReader binaryReader)");
             builder.AppendLine("\t\t{");
             builder.AppendLine("\t\t\t_id = binaryReader.ReadInt32();");
-            foreach (var head in table.TableHead.Values)
+            foreach (Tuple<string, string, string> headInfo in table.TableHead.Values)
             {
-                if (head.Item2.ToLower().Equals("byte"))
+                string name = headInfo.Item1.StartsWith('#') ? headInfo.Item1[1..] : headInfo.Item1;
+                if (headInfo.Item2.ToLower().Equals("byte"))
                 {
-                    builder.AppendLine($"\t\t\t{head.Item1} = (byte)binaryReader.{_readFuncByType[head.Item2]}();");
+                    builder.AppendLine($"\t\t\t{name} = (byte)binaryReader.{_readFuncByType[headInfo.Item2]}();");
                     continue;
                 }
-                builder.AppendLine($"\t\t\t{head.Item1} = binaryReader.{_readFuncByType[head.Item2]}();");
+                builder.AppendLine($"\t\t\t{name} = binaryReader.{_readFuncByType[headInfo.Item2]}();");
             }
-            builder.AppendLine($"\t\t\t{table.Name}Dictionary[_id] = this;");
+
+            builder.AppendLine($"\t\t\tDataDictionary[_id] = this;");
+            foreach (Tuple<string, string, string> headInfo in table.TableHead.Values)
+            {
+                if (!headInfo.Item1.StartsWith('#')) continue;
+                string name = headInfo.Item1[1..];
+                builder.AppendLine($"\t\t\t{name}ToDataDictionary[{name}] = this;");
+            }
+
             builder.AppendLine("\t\t}");
             builder.AppendLine("\t}\r\n");
         }
         builder.AppendLine("}\r\n");
 
         File.WriteAllText($"{_cSharpOutPath}/StaticData.cs", builder.ToString(), Encoding.UTF8);
-
         Console.WriteLine("表格数据生成完毕");
     }
 
@@ -290,7 +259,7 @@ internal class Program
                     isReady = false;
                     continue;
                 }
-                tableInfos.Add(new(sheet, ref isReady));
+                tableInfos.Add(ParseData(sheet, ref isReady));
             }
         }
 
@@ -300,6 +269,86 @@ internal class Program
         }
 
         return tableInfos;
+    }
+
+    private static TableInfo ParseData(DataTable dataTable, ref bool isReady)
+    {
+        TableInfo tableInfo = new()
+        {
+            TableHead = [],
+            Name = dataTable.TableName
+        };
+
+        for (int i = 1; i < dataTable.Columns.Count; i++)
+        {
+            string name = dataTable.Rows[0][i].ToString().Trim();
+            string type = dataTable.Rows[1][i].ToString().Trim();
+            string comment = dataTable.Rows[2][i].ToString().Trim();
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+            if (!_writeFuncByType.ContainsKey(type) && !string.IsNullOrWhiteSpace(type))
+            {
+                Console.WriteLine($"无法识别“{type}”类型：{dataTable.TableName}表格/2行/{i + 1}列\r\n");
+                isReady = false;
+                continue;
+            }
+            tableInfo.TableHead.Add(i, new Tuple<string, string, string>(name, type, comment));
+        }
+
+        HashSet<int> ids = [];
+        Dictionary<int, HashSet<string>> mainKeys = [];
+        foreach (KeyValuePair<int, Tuple<string, string, string>> headInfo in tableInfo.TableHead)
+        {
+            if (!headInfo.Value.Item1.StartsWith('#')) continue;
+            if (!_mainKeyType.Contains(headInfo.Value.Item2))
+            {
+                Console.WriteLine($"无法作为主键“{headInfo.Value.Item2}”类型：{dataTable.TableName}/{headInfo.Key + 1}列");
+                isReady = false;
+                continue;
+            }
+            mainKeys.Add(headInfo.Key, []);
+        }
+
+        using MemoryStream memoryStream = new();
+        using BinaryWriter binaryWriter = new(memoryStream);
+        _writeFuncByType["int"].Invoke(binaryWriter, (dataTable.Rows.Count - 3).ToString());
+        for (int i = 3; i < dataTable.Rows.Count; i++)
+        {
+            int id = int.Parse(dataTable.Rows[i][0].ToString().Trim());
+            if (!ids.Add(id))
+            {
+                Console.WriteLine($"数据ID重复：{tableInfo.Name}表格/{dataTable.TableName}分页/{i + 1}行\r\n");
+                isReady = false;
+                continue;
+            }
+            _writeFuncByType["int"].Invoke(binaryWriter, id.ToString());
+            foreach (KeyValuePair<int, Tuple<string, string, string>> headInfo in tableInfo.TableHead)
+            {
+                try
+                {
+                    string value = dataTable.Rows[i][headInfo.Key].ToString().Trim();
+                    if (mainKeys.ContainsKey(headInfo.Key))
+                    {
+                        if (!mainKeys[headInfo.Key].Add(value))
+                        {
+                            Console.WriteLine($"数据主键“{headInfo.Value.Item1}”值重复：{tableInfo.Name}表格/{dataTable.TableName}分页/{i + 1}行/{headInfo.Key + 1}列\r\n");
+                            isReady = false;
+                            continue;
+                        }
+                    }
+                    _writeFuncByType[headInfo.Value.Item2.ToLower()].Invoke(binaryWriter, value);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"数据解析错误：{tableInfo.Name}表格/{i + 1}行/{headInfo.Key + 1}列\r\n" + ex.Message);
+                    isReady = false;
+                }
+            }
+        }
+        tableInfo.Data = memoryStream.ToArray();
+        return tableInfo;
     }
 
     private static void OutFormatAnnotation(string annotation, int tabNum, StringBuilder builder)
