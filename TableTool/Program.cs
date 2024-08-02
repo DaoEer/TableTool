@@ -189,7 +189,7 @@ internal class Program
             {
                 if (!headInfo.Item1.StartsWith('#')) continue;
                 string name = headInfo.Item1[1..];
-                builder.AppendLine($"\t\tpublic static Dictionary<{headInfo.Item2.ToLower()}, {table.Name}> {name}ToDataDictionary;");
+                builder.AppendLine($"\t\tprivate static Dictionary<{headInfo.Item2.ToLower()}, {table.Name}> {name}ToDataDictionary;");
             }
             builder.AppendLine();
 
